@@ -1,0 +1,103 @@
+import pandas as pd
+import requests
+import os
+import multiprocessing
+import pdfplumber
+import logging
+import re
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+def download_pdf(pdf_url, pdf_file_path):
+    try:
+        with requests.get(pdf_url, stream=True, timeout=10) as r:
+            r.raise_for_status()
+            with open(pdf_file_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+    except requests.exceptions.RequestException as e:
+        logging.error(f"False in downloading PDF:{e}")
+        return False
+    else:
+        return True
+
+#transfer
+def convert(code, name, year, pdf_url, pdf_dir, txt_dir, flag_pdf):
+    pdf_file_path = os.path.join(pdf_dir, re.sub(r'[\\/:*?"<>|]', '',f"{code:06}_{name}_{year}.pdf"))
+    txt_file_path = os.path.join(txt_dir, re.sub(r'[\\/:*?"<>|]', '', f"{code:06}_{name}_{year}.txt"))
+
+    try:
+        # download PDF
+        if not os.path.exists(pdf_file_path):
+            retry_count = 3
+            while retry_count > 0:
+                if download_pdf(pdf_url, pdf_file_path):
+                    break
+                else:
+                    retry_count -= 1
+            if retry_count == 0:
+                logging.error(f"False in downloading PDF:{pdf_url}")
+                return
+
+        # transfer PDF to TXT
+        with pdfplumber.open(pdf_file_path) as pdf:
+            with open(txt_file_path, 'w', encoding='utf-8') as f:
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    f.write(text)
+
+        logging.info(f"save {txt_file_path} ")
+
+    except Exception as e:
+        logging.error(f"error in {code:06}_{name}_{year}, {e}")
+    else:
+        # delete PDF after transfering it
+        if flag_pdf:
+            os.remove(pdf_file_path)
+            logging.info(f"delete{pdf_file_path} ")
+
+
+
+def main(file_name,pdf_dir,txt_dir,flag_pdf):
+    # read excel
+    try:
+        df = pd.read_excel(file_name)
+    except Exception as e:
+        logging.error(f"false, {e}")
+        return
+    try:
+        os.makedirs(pdf_dir, exist_ok=True)
+        os.makedirs(txt_dir, exist_ok=True)
+    except Exception as e:
+        logging.error(f"false, {e}")
+        return
+
+    # save as dict
+    content_dict = ((row['code'], row['name'], row['year'], row['url']) for _, row in df.iterrows())
+
+    # multiprocessing: download PDF and transfer into TXT
+    with multiprocessing.Pool() as pool:
+        for code, name, year, pdf_url in content_dict:
+            txt_file_name = f"{code:06}_{name}_{year}.txt"
+            txt_file_path = os.path.join(txt_dir, txt_file_name)
+            if os.path.exists(txt_file_path):
+                logging.info(f"{txt_file_name} exist - skip it")
+            else:
+                pool.apply_async(convert, args=(code, name, year, pdf_url, pdf_dir, txt_dir, flag_pdf))
+
+        pool.close()
+        pool.join()
+
+if __name__ == '__main__':
+    flag_pdf = True
+    Flag = False
+    for year in range(2013, 2023):  # I need data from 2013 to 2022
+        file_name = f"C:/Users/chenjx/Desktop/财报数据/年报/url_{year}.xlsx"
+        pdf_dir = f'C:/Users/chenjx/Desktop/财报数据/年报文件/{year}/pdf年报'
+        txt_dir = f'C:/Users/chenjx/Desktop/财报数据/年报文件/{year}/txt年报'
+        main(file_name, pdf_dir, txt_dir, flag_pdf)
+        print(f"{year}finished")
+
+
+
+
