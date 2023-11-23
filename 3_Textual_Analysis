@@ -1,0 +1,169 @@
+import os
+import re
+import xlwt
+import jieba
+
+def extract_keywords(filename, keywords):
+
+    keyword_counts = [0] * len(keywords)
+    total_words = 0
+
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # tokenization
+        words = jieba.cut(content)
+        words = [word for word in words if word.strip()]
+
+        # count frequency
+        for i, keyword in enumerate(keywords):
+            keyword_counts[i] = words.count(keyword)
+
+        total_words = len(words)
+    except FileNotFoundError:
+        print(f"FileNotFoundError:{filename}")
+    except PermissionError:
+        print(f"PermissionError: {filename}")
+    except Exception as e:
+        print(f"KeywordError: {filename}")
+        print(str(e))
+
+    return keyword_counts, total_words
+
+
+def count_txt_files(folder_path, start_year=None, end_year=None):
+
+    total_files = 0
+    processed_files = 0
+
+    try:
+        # iterate
+        for root, dirs, files in os.walk(folder_path):
+            match = re.match(r'.*([12]\d{3}).*', os.path.basename(root))
+            if match:
+                year = match.group(1)
+                if (start_year is not None and int(year) < int(start_year)) or (end_year is not None and int(year) > int(end_year)):
+                    dirs[:] = []
+                    continue
+
+            for filename in files:
+                if filename.endswith('.txt'):
+                    total_files += 1
+    except FileNotFoundError:
+        print(f"FileNotFoundError: {folder_path}")
+    except PermissionError:
+        print(f"PermissionError: {folder_path}")
+    except Exception as e:
+        print(f"CountError: {folder_path}")
+        print(str(e))
+
+    return total_files
+
+def process_files(folder_path, keywords, start_year=None, end_year=None):
+
+    try:
+        # set excel
+        workbook = xlwt.Workbook(encoding='utf-8')
+        worksheet = workbook.add_sheet('annual report')
+        row = 0
+        worksheet.write(row, 0, 'code')
+        worksheet.write(row, 1, 'name')
+        worksheet.write(row, 2, 'year')
+        worksheet.write(row, 3, 'total')
+        for i, keyword in enumerate(keywords):
+            worksheet.write(row, i + 4, keyword)
+        row += 1
+
+        total_files = count_txt_files(folder_path, start_year, end_year)
+        processed_files = 0
+
+        try:
+            # iterate
+            for root, dirs, files in os.walk(folder_path):
+                # get year
+                match = re.match(r'.*([12]\d{3}).*', os.path.basename(root))
+                if match:
+                    year = match.group(1)
+                    if (start_year is not None and int(year) < int(start_year)) or (end_year is not None and int(year) > int(end_year)):
+                        dirs[:] = []
+                        continue
+
+                # iterate
+                for filename in files:
+                    if filename.endswith('.txt'):
+                        # get code and name
+                        match = re.match(r'^(\d{6})_(.*?)_(\d{4})\.txt$', filename)
+                        if match:
+                            stock_code = match.group(1)
+                            company_name = match.group(2)
+
+                            keyword_counts, total_words = extract_keywords(os.path.join(root, filename), keywords)
+
+                            worksheet.write(row, 0, stock_code)
+                            worksheet.write(row, 1, company_name)
+                            worksheet.write(row, 2, year)
+                            worksheet.write(row, 3, total_words)
+                            for i, count in enumerate(keyword_counts):
+                                worksheet.write(row, i + 4, count)
+                            row += 1
+
+                            processed_files += 1
+                            progress = (processed_files / total_files) * 100
+                            print(f"\rcurrent: {progress:.2f}%", end='', flush=True)
+
+                            if processed_files % size == 0:
+                                workbook.save(name)
+        except FileNotFoundError:
+            print(f"FileNotFoundError: {folder_path}")
+        except PermissionError:
+            print(f"PermissionError: {folder_path}")
+        except Exception as e:
+            print(f"AnalyzeError: {folder_path}")
+            print(str(e))
+
+        # save to excel
+        try:
+            workbook.save(name)
+            print("\nExcel is saved！")
+        except FileNotFoundError:
+            print(f"\nFileNotFoundError")
+        except PermissionError:
+            print(f"\nPermissionError")
+        except Exception as e:
+            print("\nExcel can't be saved!")
+            print(str(e))
+    except FileNotFoundError:
+        print(f"FileNotFoundError: {folder_path}")
+    except PermissionError:
+        print(f"PermissionError:{folder_path}")
+    except Exception as e:
+        print("False！")
+        print(str(e))
+
+
+if __name__ == '__main__':
+    # Keywords we get from policy documents, here are only examples
+    keywords = [
+        '绿色', '环保', '减排',
+        '绿色创新', '低碳', '节能', '能耗', '环境保护',
+    ]
+
+    root_folder = "C:/Users/chenjx/Desktop/财报数据/年报文件"
+    # 输入年份区间
+    start_year = "2013"
+    end_year = "2022"
+
+    # 输入处理结果的文件名
+    name = "frequency_result.xlsx"
+    size = 100
+
+    try:
+        if start_year > end_year:
+            print("error about year")
+        else:
+            process_files(root_folder, keywords, start_year, end_year)
+    except Exception as e:
+        print("false")
+        print(str(e))
+
