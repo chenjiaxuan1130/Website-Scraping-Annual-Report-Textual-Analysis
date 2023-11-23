@@ -1,0 +1,183 @@
+import re
+import openpyxl
+import time
+import requests
+def get_report(page_num,date):
+    url = "http://www.cninfo.com.cn/new/hisAnnouncement/query"
+    headers = {
+        "Accept": "*/*",
+        "Accept-Encoding": "gzip, deflate",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8,en-GB;q=0.7,en-US;q=0.6",
+        "Content-Length": "195",
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        "Host": "www.cninfo.com.cn",
+        "Origin": "http://www.cninfo.com.cn",
+        "Proxy-Connection": "keep-alive",
+        "Referer": "http://www.cninfo.com.cn/new/commonUrl/pageOfSearch?url=disclosure/list/search&checkedCategory=category_ndbg_szsh",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36 Edg/113.0.1774.42",
+        "X-Requested-With": "XMLHttpRequest"
+    }
+
+    data = {
+        "pageNum": page_num,
+        "pageSize": 30,
+        "column": "szse",
+        "tabName": "fulltext",
+        "plate": "sz;sh",
+        "searchkey": "",
+        "secid": "",
+        "category": "category_ndbg_szsh",
+        "trade": "",
+        "seDate": date,
+        "sortName": "code",
+        "sortType": "asc",
+        "isHLtitle": "false"
+    }
+    response = requests.post(url, data=data, headers=headers)
+    return response
+
+
+# send request and get response
+def downlaod_report(date):
+    global counter
+    all_results = []
+    page_num = 1
+    response_test = get_report(page_num,date)
+    data_test = response_test.json()
+    total_pages = data_test["totalpages"]
+    max_retries = 3
+    retry_count = 0
+    while page_num <= total_pages:
+        response = None
+
+        # retries
+        while retry_count <= max_retries:
+            # sent request
+            try:
+                # response = requests.post(url, data=data,headers=headers)
+                response = get_report(page_num,date)
+                response.raise_for_status()
+                break
+            except requests.exceptions.RequestException as e:
+                print(f"false！: {e}")
+                print(f"retry after 5 seconds...")
+                time.sleep(5)
+                retry_count += 1
+
+        if retry_count > max_retries:
+            print(f"still fail after {max_retries} times. skip page {page_num}")
+            page_num += 1
+            retry_count = 0
+            continue
+        else:
+            # prasing
+            try:
+                data = response.json()
+
+                per = (counter/sum)
+                if  per <1:
+                    print(f"\rcurrent process {per*100:.2f} %",end='')
+                else:
+                    print(f"\rfinished, saving...", end='')
+                # retry
+                retry_count = 0
+                while True:
+                    try:
+                        if data["announcements"] is None:
+                            raise Exception("empty")
+                        else:
+                            all_results.extend(data["announcements"])
+                        break
+                    except (TypeError, KeyError) as e:
+                        print(f"false: {e}")
+                        print(f"retry after 5 seconds...")
+                        time.sleep(5)
+                        retry_count += 1
+                        if retry_count > max_retries:
+                            raise Exception("Maximun tries. Skip.")
+                        continue
+                page_num += 1
+                counter +=1
+            except (ValueError, KeyError) as e:
+                print(f"false: {e}")
+                print(f"retry after 5 seconds...")
+                time.sleep(5)
+                retry_count += 1
+                if retry_count > max_retries:
+                    raise Exception("Maximun tries. Skip.")
+                continue
+    return all_results
+
+def main(year):
+    # count
+    global sum
+    date_count = f"{year}-01-01~{year}-04-30"
+    response = get_report(1,date_count)
+    data = response.json()
+    sum = data["totalpages"]
+
+    year = year+1
+    all_results = []
+    time_segments = [
+        f"{year}-01-01~{year}-04-01",
+        f"{year}-04-02~{year}-04-15",
+        f"{year}-04-16~{year}-04-22",
+        f"{year}-04-23~{year}-04-26",
+        f"{year}-04-27~{year}-04-28",
+        f"{year}-04-29~{year}-04-30"
+    ]
+    for i in time_segments:
+        results = downlaod_report(i)
+        all_results.extend(results)
+
+
+    # set excel
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "annual_report"
+    worksheet.append(["code", "name", "title", "year", "url"])
+
+    # save to excel
+    for item in all_results:
+        company_code = item["secCode"]
+        company_name = item["secName"]
+        title = item["announcementTitle"].strip()
+        title = re.sub(r"<.*?>", "", title)
+        title = title.replace("：", "")
+        title = f"《{title}》"
+
+        adjunct_url = item["adjunctUrl"]
+        year = re.search(r"\d{4}", title)
+        if year:
+            year = year.group()
+        else:
+            year = setYear
+        time = f"{year}"
+        announcement_url = f"http://static.cninfo.com.cn/{adjunct_url}"
+
+        # check if exclude keyword
+        exclude_flag = False
+        for keyword in exclude_keywords:
+            if keyword in title:
+                exclude_flag = True
+                break
+
+        # if yes, save to excel
+        if not exclude_flag:
+            worksheet.append([company_code, company_name, title, time, announcement_url])
+    workbook.save(f"url_{setYear}.xlsx")
+
+
+if __name__ == '__main__':
+    exclude_keywords = ['英文', '摘要','已取消','公告']
+    global counter
+    global sum
+    counter = 1
+    setYear = 2  # the year I am looking for
+    Flag = False
+
+    for setYear in range(2017, 2023):
+        counter = 1  # 计数器
+        main(setYear)
+        print(f"{setYear} finished")
+
